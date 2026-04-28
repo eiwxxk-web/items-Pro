@@ -1,0 +1,694 @@
+-- ╔════════════════════════════════════════════════════════════╗
+-- ║          ROBLOX TOOL MANAGER - ULTRA FIXED EDITION        ║
+-- ║              🔧 الأدوات محفوظة للأبد - لا تختفي أبداً    ║
+-- ╚════════════════════════════════════════════════════════════╝
+
+-- ============================================
+-- [SERVICES]
+-- ============================================
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+
+local player = Players.LocalPlayer
+local backpack = player:WaitForChild("Backpack")
+
+-- ============================================
+-- [SETTINGS]
+-- ============================================
+local Settings = {
+    CheckDuplicates = true,
+    TransferFromBackpack = true,
+    TransferFromCharacter = true,
+    TransferFromStarterGear = true,
+    AutoEquip = false,
+    ShowGUI = true,
+    ShowConsoleLogs = true,
+    DelayBetweenTransfers = 0.05,
+    MaxToolsPerScan = 100,
+}
+
+-- ============================================
+-- [PERSISTENT TOOL VAULT - الخزنة الدائمة]
+-- الحل الحقيقي: نحفظ الأداة كـ clone ثابت في _G
+-- حتى لو ماتت الشخصية أو انحذف كل شيء، الخزنة تبقى
+-- ============================================
+if not _G.__ToolVault then
+    _G.__ToolVault = {}
+end
+local ToolVault = _G.__ToolVault
+
+local function vaultSave(tool)
+    if not tool or not tool:IsA("Tool") then return end
+    local name = tool.Name
+    -- نحفظ clone جديد فقط إذا ما عندنا واحد أو إذا القديم صار invalid
+    if not ToolVault[name] or not ToolVault[name].Parent then
+        local ok, clone = pcall(function() return tool:Clone() end)
+        if ok and clone then
+            clone.CanBeDropped = false
+            -- نخبّي الأداة في ReplicatedStorage بدل ما تبقى بدون parent
+            -- هذا يمنعها من الانحذاف
+            local RS = game:GetService("ReplicatedStorage")
+            local vault = RS:FindFirstChild("__ToolVault__")
+            if not vault then
+                vault = Instance.new("Folder")
+                vault.Name = "__ToolVault__"
+                vault.Parent = RS
+            end
+            -- احذف القديم إن وجد
+            local old = vault:FindFirstChild(name)
+            if old then old:Destroy() end
+            clone.Parent = vault
+            ToolVault[name] = clone
+            if Settings.ShowConsoleLogs then
+                print("💾 [محفوظ في الخزنة] " .. name)
+            end
+        end
+    end
+end
+
+local function vaultGetAll()
+    -- نرجّع قائمة بأسماء كل الأدوات المحفوظة
+    local list = {}
+    for name, tool in pairs(ToolVault) do
+        -- تأكد الـ clone لسه موجود وصحيح
+        if tool and tool.Parent then
+            list[name] = tool
+        else
+            -- إذا انحذف من الخزنة بطريقة ما، نشيله
+            ToolVault[name] = nil
+        end
+    end
+    return list
+end
+
+-- ============================================
+-- [RESTORE - استعادة الأدوات من الخزنة]
+-- ============================================
+local function restoreAllTools()
+    task.wait(1.5) -- انتظر تحميل الشخصية والباكباك
+
+    local currentBackpack = player:WaitForChild("Backpack", 5)
+    if not currentBackpack then
+        print("❌ لم يتم العثور على Backpack")
+        return
+    end
+
+    local vault = vaultGetAll()
+    local restored = 0
+
+    for name, savedTool in pairs(vault) do
+        -- تحقق أن الأداة مش موجودة عندي
+        local inBackpack = currentBackpack:FindFirstChild(name)
+        local inChar = player.Character and player.Character:FindFirstChild(name)
+
+        if not inBackpack and not inChar then
+            local ok, clone = pcall(function() return savedTool:Clone() end)
+            if ok and clone then
+                clone.CanBeDropped = false
+                clone.Parent = currentBackpack
+                restored = restored + 1
+                if Settings.ShowConsoleLogs then
+                    print("  ✅ [مُستعادة] " .. name)
+                end
+            end
+        end
+    end
+
+    -- كمان نحفظ في StarterGear عشان الموتات الجاية
+    if player.StarterGear then
+        for name, savedTool in pairs(vault) do
+            if not player.StarterGear:FindFirstChild(name) then
+                local ok, clone = pcall(function() return savedTool:Clone() end)
+                if ok and clone then
+                    clone.CanBeDropped = false
+                    clone.Parent = player.StarterGear
+                end
+            end
+        end
+    end
+
+    if restored > 0 then
+        print("🎉 تم استعادة " .. restored .. " أداة من الخزنة!")
+    else
+        local count = 0
+        for _ in pairs(vault) do count = count + 1 end
+        if count > 0 then
+            print("✅ كل الأدوات موجودة بالفعل (" .. count .. " أداة)")
+        end
+    end
+end
+
+-- ============================================
+-- [BLACKLIST & WHITELIST]
+-- ============================================
+local blacklist = {}
+local whitelist = {}
+
+local function isBlacklisted(toolName)
+    for _, name in ipairs(blacklist) do
+        if toolName:lower():find(name:lower()) then return true end
+    end
+    return false
+end
+
+local function isWhitelisted(toolName)
+    if #whitelist == 0 then return true end
+    for _, name in ipairs(whitelist) do
+        if toolName:lower():find(name:lower()) then return true end
+    end
+    return false
+end
+
+-- ============================================
+-- [GET TOOLS FROM TARGET PLAYER]
+-- ============================================
+local function getPlayerTools(targetPlayer)
+    local tools = {}
+    local seen = {}
+    local count = 0
+
+    local function addTool(child, location)
+        if count >= Settings.MaxToolsPerScan then return end
+        if child:IsA("Tool") and not seen[child.Name] then
+            seen[child.Name] = true
+            table.insert(tools, { tool = child, location = location, player = targetPlayer })
+            count = count + 1
+        end
+    end
+
+    if Settings.TransferFromBackpack and targetPlayer.Backpack then
+        for _, c in ipairs(targetPlayer.Backpack:GetChildren()) do addTool(c, "Backpack") end
+    end
+
+    if Settings.TransferFromCharacter and targetPlayer.Character then
+        for _, c in ipairs(targetPlayer.Character:GetChildren()) do addTool(c, "Character") end
+    end
+
+    if Settings.TransferFromStarterGear and targetPlayer.StarterGear then
+        for _, c in ipairs(targetPlayer.StarterGear:GetChildren()) do addTool(c, "StarterGear") end
+    end
+
+    return tools
+end
+
+local function getMyCurrentTools()
+    local myTools = {}
+    for _, c in ipairs(backpack:GetChildren()) do
+        if c:IsA("Tool") then myTools[c.Name] = true end
+    end
+    if player.Character then
+        for _, c in ipairs(player.Character:GetChildren()) do
+            if c:IsA("Tool") then myTools[c.Name] = true end
+        end
+    end
+    -- كمان تحقق من الخزنة
+    for name in pairs(ToolVault) do
+        myTools[name] = true
+    end
+    return myTools
+end
+
+-- ============================================
+-- [COPY & TRANSFER]
+-- ============================================
+local function copyTool(tool)
+    local clone = tool:Clone()
+    clone.CanBeDropped = false
+    clone.Parent = backpack
+    -- احفظ في الخزنة فوراً
+    vaultSave(clone)
+    -- احفظ في StarterGear
+    if player.StarterGear then
+        local old = player.StarterGear:FindFirstChild(tool.Name)
+        if old then old:Destroy() end
+        local sgClone = tool:Clone()
+        sgClone.CanBeDropped = false
+        sgClone.Parent = player.StarterGear
+    end
+    if Settings.AutoEquip and player.Character then
+        task.wait(0.1)
+        clone.Parent = player.Character
+    end
+    return clone
+end
+
+local function transferTool(toolInfo, myTools)
+    local tool = toolInfo.tool
+    local name = tool.Name
+
+    if isBlacklisted(name) then return false, "blacklisted" end
+    if not isWhitelisted(name) then return false, "not whitelisted" end
+    if Settings.CheckDuplicates and myTools[name] then return false, "duplicate" end
+
+    local ok, result = pcall(copyTool, tool)
+    if ok and result then
+        if Settings.ShowConsoleLogs then
+            print("✅ [منقول] " .. name .. " (من " .. toolInfo.player.Name .. " - " .. toolInfo.location .. ")")
+        end
+        return true, "success", result
+    else
+        if Settings.ShowConsoleLogs then
+            print("❌ [فشل] " .. name)
+        end
+        return false, "copy failed"
+    end
+end
+
+-- ============================================
+-- [SCAN & TRANSFER ALL]
+-- ============================================
+local function scanPlayer(targetPlayer, myTools)
+    if targetPlayer == player then return { transferred = 0, skipped = 0, tools = {} } end
+
+    if Settings.ShowConsoleLogs then print("🔍 فحص: " .. targetPlayer.Name) end
+
+    local tools = getPlayerTools(targetPlayer)
+    local result = { transferred = 0, skipped = 0, tools = {} }
+
+    for _, toolInfo in ipairs(tools) do
+        local success, reason, newTool = transferTool(toolInfo, myTools)
+        if success then
+            result.transferred = result.transferred + 1
+            table.insert(result.tools, { name = toolInfo.tool.Name, source = targetPlayer.Name, location = toolInfo.location })
+            myTools[toolInfo.tool.Name] = true
+        else
+            result.skipped = result.skipped + 1
+        end
+        task.wait(Settings.DelayBetweenTransfers)
+    end
+
+    if Settings.ShowConsoleLogs and #tools > 0 then
+        print("   📦 وجدت: " .. #tools .. " | ✅ منقول: " .. result.transferred .. " | ⏭️ متخطي: " .. result.skipped)
+    end
+
+    return result
+end
+
+local function transferAllTools()
+    print("")
+    print("════════════════════════════════════════")
+    print("🚀 بدء عملية نقل الأدوات")
+    print("════════════════════════════════════════")
+
+    -- أول شيء: استعد أدوات الخزنة إذا عندنا
+    local vaultCount = 0
+    for _ in pairs(ToolVault) do vaultCount = vaultCount + 1 end
+    if vaultCount > 0 then
+        print("💾 عندك " .. vaultCount .. " أداة محفوظة في الخزنة - جاري استعادتها...")
+        restoreAllTools()
+        task.wait(0.5)
+    end
+
+    local myTools = getMyCurrentTools()
+    local total = { transferred = 0, skipped = 0, scanned = 0, allTools = {} }
+
+    for _, targetPlayer in ipairs(Players:GetPlayers()) do
+        local result = scanPlayer(targetPlayer, myTools)
+        total.transferred += result.transferred
+        total.skipped += result.skipped
+        total.scanned += 1
+        for _, t in ipairs(result.tools) do table.insert(total.allTools, t) end
+    end
+
+    print("")
+    print("════════════════════════════════════════")
+    print("📊 تقرير النقل النهائي")
+    print("════════════════════════════════════════")
+    print("👥 اللاعبين المفحوصين: " .. total.scanned)
+    print("✅ الأدوات المنقولة: " .. total.transferred)
+    print("⏭️ الأدوات المتخطاة: " .. total.skipped)
+
+    local vaultTotal = 0
+    for _ in pairs(ToolVault) do vaultTotal = vaultTotal + 1 end
+    print("💾 إجمالي الأدوات في الخزنة: " .. vaultTotal)
+    print("════════════════════════════════════════")
+
+    if #total.allTools > 0 then
+        print("📦 الأدوات الجديدة المنقولة:")
+        for _, t in ipairs(total.allTools) do
+            print("   - " .. t.name .. " (من " .. t.source .. ")")
+        end
+    end
+
+    return total
+end
+
+-- ============================================
+-- [GUI]
+-- ============================================
+local function createGUI()
+    if not Settings.ShowGUI then return end
+
+    local playerGui = player:WaitForChild("PlayerGui")
+    if playerGui:FindFirstChild("ToolManagerGUI") then
+        playerGui.ToolManagerGUI:Destroy()
+    end
+
+    local screenGui = Instance.new("ScreenGui")
+    screenGui.Name = "ToolManagerGUI"
+    screenGui.Parent = playerGui
+    screenGui.ResetOnSpawn = false
+    screenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+
+    local mainFrame = Instance.new("Frame")
+    mainFrame.Name = "MainFrame"
+    mainFrame.Size = UDim2.new(0, 360, 0, 370)
+    mainFrame.Position = UDim2.new(0.02, 0, 0.3, 0)
+    mainFrame.BackgroundColor3 = Color3.fromRGB(18, 18, 28)
+    mainFrame.BackgroundTransparency = 0.05
+    mainFrame.BorderSizePixel = 0
+    mainFrame.Active = true
+    mainFrame.Draggable = true
+    mainFrame.Parent = screenGui
+
+    Instance.new("UICorner", mainFrame).CornerRadius = UDim.new(0, 16)
+
+    -- Stroke
+    local stroke = Instance.new("UIStroke")
+    stroke.Color = Color3.fromRGB(80, 120, 255)
+    stroke.Thickness = 1.5
+    stroke.Transparency = 0.5
+    stroke.Parent = mainFrame
+
+    -- Title Bar
+    local titleBar = Instance.new("Frame")
+    titleBar.Size = UDim2.new(1, 0, 0, 45)
+    titleBar.BackgroundColor3 = Color3.fromRGB(30, 30, 50)
+    titleBar.BorderSizePixel = 0
+    titleBar.Parent = mainFrame
+    Instance.new("UICorner", titleBar).CornerRadius = UDim.new(0, 16)
+
+    local title = Instance.new("TextLabel")
+    title.Text = "⚡ Tool Manager ULTRA"
+    title.Size = UDim2.new(1, -55, 1, 0)
+    title.Position = UDim2.new(0, 15, 0, 0)
+    title.BackgroundTransparency = 1
+    title.TextColor3 = Color3.fromRGB(120, 180, 255)
+    title.TextXAlignment = Enum.TextXAlignment.Left
+    title.Font = Enum.Font.GothamBold
+    title.TextSize = 17
+    title.Parent = titleBar
+
+    local closeBtn = Instance.new("TextButton")
+    closeBtn.Text = "✖"
+    closeBtn.Size = UDim2.new(0, 32, 0, 28)
+    closeBtn.Position = UDim2.new(1, -38, 0, 8)
+    closeBtn.BackgroundColor3 = Color3.fromRGB(180, 45, 45)
+    closeBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+    closeBtn.Font = Enum.Font.GothamBold
+    closeBtn.TextSize = 14
+    closeBtn.Parent = titleBar
+    Instance.new("UICorner", closeBtn).CornerRadius = UDim.new(0, 7)
+    closeBtn.MouseButton1Click:Connect(function() screenGui:Destroy() end)
+
+    -- Vault Status Label
+    local vaultLabel = Instance.new("TextLabel")
+    vaultLabel.Name = "VaultLabel"
+    vaultLabel.Size = UDim2.new(0.9, 0, 0, 28)
+    vaultLabel.Position = UDim2.new(0.05, 0, 0, 50)
+    vaultLabel.BackgroundColor3 = Color3.fromRGB(20, 40, 60)
+    vaultLabel.BackgroundTransparency = 0.3
+    vaultLabel.TextColor3 = Color3.fromRGB(80, 220, 160)
+    vaultLabel.Font = Enum.Font.GothamBold
+    vaultLabel.TextSize = 12
+    vaultLabel.Text = "💾 الخزنة: 0 أداة محفوظة"
+    vaultLabel.Parent = mainFrame
+    Instance.new("UICorner", vaultLabel).CornerRadius = UDim.new(0, 8)
+
+    local function updateVaultLabel()
+        local count = 0
+        for _ in pairs(ToolVault) do count = count + 1 end
+        vaultLabel.Text = "💾 الخزنة الدائمة: " .. count .. " أداة محفوظة"
+    end
+    updateVaultLabel()
+
+    -- Transfer Button
+    local transferBtn = Instance.new("TextButton")
+    transferBtn.Text = "📦 نقل جميع الأدوات"
+    transferBtn.Size = UDim2.new(0.9, 0, 0, 48)
+    transferBtn.Position = UDim2.new(0.05, 0, 0, 88)
+    transferBtn.BackgroundColor3 = Color3.fromRGB(40, 130, 60)
+    transferBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+    transferBtn.Font = Enum.Font.GothamBold
+    transferBtn.TextSize = 16
+    transferBtn.Parent = mainFrame
+    Instance.new("UICorner", transferBtn).CornerRadius = UDim.new(0, 11)
+
+    transferBtn.MouseButton1Click:Connect(function()
+        transferBtn.Text = "⏳ جاري النقل..."
+        transferBtn.BackgroundColor3 = Color3.fromRGB(90, 90, 40)
+        task.spawn(function()
+            local results = transferAllTools()
+            updateVaultLabel()
+            transferBtn.Text = "✅ تم! (" .. results.transferred .. " جديدة)"
+            transferBtn.BackgroundColor3 = Color3.fromRGB(40, 180, 70)
+            task.wait(3)
+            transferBtn.Text = "📦 نقل جميع الأدوات"
+            transferBtn.BackgroundColor3 = Color3.fromRGB(40, 130, 60)
+        end)
+    end)
+
+    -- Restore Button
+    local restoreBtn = Instance.new("TextButton")
+    restoreBtn.Text = "🔄 استعادة من الخزنة"
+    restoreBtn.Size = UDim2.new(0.9, 0, 0, 40)
+    restoreBtn.Position = UDim2.new(0.05, 0, 0, 145)
+    restoreBtn.BackgroundColor3 = Color3.fromRGB(60, 80, 180)
+    restoreBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+    restoreBtn.Font = Enum.Font.GothamBold
+    restoreBtn.TextSize = 15
+    restoreBtn.Parent = mainFrame
+    Instance.new("UICorner", restoreBtn).CornerRadius = UDim.new(0, 11)
+
+    restoreBtn.MouseButton1Click:Connect(function()
+        restoreBtn.Text = "⏳ جاري الاستعادة..."
+        task.spawn(function()
+            restoreAllTools()
+            updateVaultLabel()
+            restoreBtn.Text = "✅ تمت الاستعادة!"
+            task.wait(2)
+            restoreBtn.Text = "🔄 استعادة من الخزنة"
+        end)
+    end)
+
+    -- My Tools Button
+    local myToolsBtn = Instance.new("TextButton")
+    myToolsBtn.Text = "📋 عرض أدواتي في الكونسول"
+    myToolsBtn.Size = UDim2.new(0.9, 0, 0, 38)
+    myToolsBtn.Position = UDim2.new(0.05, 0, 0, 193)
+    myToolsBtn.BackgroundColor3 = Color3.fromRGB(70, 55, 130)
+    myToolsBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+    myToolsBtn.Font = Enum.Font.GothamBold
+    myToolsBtn.TextSize = 14
+    myToolsBtn.Parent = mainFrame
+    Instance.new("UICorner", myToolsBtn).CornerRadius = UDim.new(0, 11)
+
+    myToolsBtn.MouseButton1Click:Connect(function()
+        print("")
+        print("════════════════════════════════════════")
+        print("💾 الأدوات في الخزنة الدائمة:")
+        local count = 0
+        for name in pairs(ToolVault) do
+            print("   🔐 " .. name)
+            count = count + 1
+        end
+        if count == 0 then print("   (الخزنة فارغة)") end
+        print("════════════════════════════════════════")
+        print("📋 الأدوات في الباكباك حالياً:")
+        local bpCount = 0
+        for _, c in ipairs(backpack:GetChildren()) do
+            if c:IsA("Tool") then
+                print("   🎒 " .. c.Name)
+                bpCount = bpCount + 1
+            end
+        end
+        if bpCount == 0 then print("   (فارغ)") end
+        print("════════════════════════════════════════")
+        print("💾 الخزنة: " .. count .. " | 🎒 الباكباك: " .. bpCount)
+        updateVaultLabel()
+    end)
+
+    -- Speed Button
+    local speedBtn = Instance.new("TextButton")
+    speedBtn.Text = "⚡ السرعة: فائقة"
+    speedBtn.Size = UDim2.new(0.9, 0, 0, 35)
+    speedBtn.Position = UDim2.new(0.05, 0, 0, 239)
+    speedBtn.BackgroundColor3 = Color3.fromRGB(100, 50, 130)
+    speedBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+    speedBtn.Font = Enum.Font.Gotham
+    speedBtn.TextSize = 13
+    speedBtn.Parent = mainFrame
+    Instance.new("UICorner", speedBtn).CornerRadius = UDim.new(0, 11)
+
+    local speeds = { {name="عادية", delay=0.1}, {name="سريعة", delay=0.05}, {name="فائقة", delay=0.01} }
+    local currentSpeed = 3
+    speedBtn.MouseButton1Click:Connect(function()
+        currentSpeed = currentSpeed % 3 + 1
+        Settings.DelayBetweenTransfers = speeds[currentSpeed].delay
+        speedBtn.Text = "⚡ السرعة: " .. speeds[currentSpeed].name
+    end)
+
+    -- Divider
+    local line = Instance.new("Frame")
+    line.Size = UDim2.new(0.9, 0, 0, 1)
+    line.Position = UDim2.new(0.05, 0, 0, 284)
+    line.BackgroundColor3 = Color3.fromRGB(60, 60, 90)
+    line.BorderSizePixel = 0
+    line.Parent = mainFrame
+
+    -- Discord
+    local discordFrame = Instance.new("Frame")
+    discordFrame.Size = UDim2.new(0.9, 0, 0, 36)
+    discordFrame.Position = UDim2.new(0.05, 0, 0, 293)
+    discordFrame.BackgroundColor3 = Color3.fromRGB(40, 45, 80)
+    discordFrame.BorderSizePixel = 0
+    discordFrame.Parent = mainFrame
+    Instance.new("UICorner", discordFrame).CornerRadius = UDim.new(0, 9)
+
+    local discordText = Instance.new("TextLabel")
+    discordText.Text = "💬 discord.gg/uKdvZk7G"
+    discordText.Size = UDim2.new(0.7, 0, 1, 0)
+    discordText.Position = UDim2.new(0.04, 0, 0, 0)
+    discordText.BackgroundTransparency = 1
+    discordText.TextColor3 = Color3.fromRGB(100, 150, 255)
+    discordText.Font = Enum.Font.Gotham
+    discordText.TextSize = 12
+    discordText.TextXAlignment = Enum.TextXAlignment.Left
+    discordText.Parent = discordFrame
+
+    local copyBtn = Instance.new("TextButton")
+    copyBtn.Text = "📋 نسخ"
+    copyBtn.Size = UDim2.new(0.25, 0, 0.75, 0)
+    copyBtn.Position = UDim2.new(0.72, 0, 0.13, 0)
+    copyBtn.BackgroundColor3 = Color3.fromRGB(65, 70, 110)
+    copyBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+    copyBtn.Font = Enum.Font.Gotham
+    copyBtn.TextSize = 11
+    copyBtn.Parent = discordFrame
+    Instance.new("UICorner", copyBtn).CornerRadius = UDim.new(0, 6)
+
+    copyBtn.MouseButton1Click:Connect(function()
+        pcall(function() setclipboard("https://discord.gg/uKdvZk7G") end)
+        copyBtn.Text = "✅ تم!"
+        task.wait(1.5)
+        copyBtn.Text = "📋 نسخ"
+    end)
+
+    -- Status
+    local statusLabel = Instance.new("TextLabel")
+    statusLabel.Text = "✅ الأدوات محفوظة في الخزنة الدائمة • لا تختفي أبداً"
+    statusLabel.Size = UDim2.new(0.95, 0, 0, 22)
+    statusLabel.Position = UDim2.new(0.025, 0, 0, 338)
+    statusLabel.BackgroundTransparency = 1
+    statusLabel.TextColor3 = Color3.fromRGB(80, 200, 120)
+    statusLabel.Font = Enum.Font.Gotham
+    statusLabel.TextSize = 10
+    statusLabel.Parent = mainFrame
+
+    -- Auto-update vault label every 2 seconds
+    task.spawn(function()
+        while screenGui.Parent do
+            updateVaultLabel()
+            task.wait(2)
+        end
+    end)
+end
+
+-- ============================================
+-- [LISTENERS - مراقبة الأدوات وحفظها فوراً]
+-- ============================================
+
+-- لما تُضاف أداة للباكباك، احفظها في الخزنة فوراً
+backpack.ChildAdded:Connect(function(child)
+    task.wait(0.2)
+    if child:IsA("Tool") then
+        vaultSave(child)
+    end
+end)
+
+-- لما الشخصية تموت وترجع، استعد الأدوات من الخزنة
+player.CharacterAdded:Connect(function(newChar)
+    print("🔄 تم إعادة تحميل الشخصية - الخزنة ستستعيد أدواتك...")
+
+    -- لما الشخصية تتحمل ويكون عندنا باكباك جديد
+    local newBackpack = player:WaitForChild("Backpack", 10)
+    if newBackpack then
+        backpack = newBackpack -- تحديث المتغير
+        -- مراقبة الباكباك الجديد
+        newBackpack.ChildAdded:Connect(function(child)
+            task.wait(0.2)
+            if child:IsA("Tool") then
+                vaultSave(child)
+            end
+        end)
+    end
+
+    restoreAllTools()
+end)
+
+-- ============================================
+-- [INITIALIZATION]
+-- ============================================
+local function startScript()
+    print("")
+    print("╔════════════════════════════════════════════╗")
+    print("║   ⚡ TOOL MANAGER ULTRA - VAULT EDITION   ║")
+    print("╚════════════════════════════════════════════╝")
+    print("✅ السكريبت يعمل بنجاح")
+    print("")
+    print("📌 الميزات الجديدة:")
+    print("   ✓ 🔐 خزنة دائمة في _G لا تختفي أبداً")
+    print("   ✓ 🔐 حفظ الأدوات في ReplicatedStorage كـ backup")
+    print("   ✓ 🔄 استعادة تلقائية عند الموت")
+    print("   ✓ 🔄 مراقبة الباكباك الجديد بعد الموت")
+    print("   ✓ ✓ فحص Backpack + Character + StarterGear")
+    print("   ✓ تجنب التكرار التلقائي")
+    print("════════════════════════════════════════════")
+    print("💬 Discord: discord.gg/uKdvZk7G")
+    print("════════════════════════════════════════════")
+
+    pcall(createGUI)
+
+    -- احفظ الأدوات الموجودة لدي الآن في الخزنة
+    local count = 0
+    for _, c in ipairs(backpack:GetChildren()) do
+        if c:IsA("Tool") then
+            vaultSave(c)
+            count = count + 1
+        end
+    end
+    if player.Character then
+        for _, c in ipairs(player.Character:GetChildren()) do
+            if c:IsA("Tool") then
+                vaultSave(c)
+                count = count + 1
+            end
+        end
+    end
+
+    print("📋 تم حفظ " .. count .. " أداة موجودة في الخزنة")
+
+    -- تعريف الدوال العامة
+    _G.TransferAllTools = transferAllTools
+    _G.RestoreTools = restoreAllTools
+    _G.ShowVault = function()
+        print("💾 الخزنة الدائمة:")
+        local n = 0
+        for name in pairs(ToolVault) do
+            print("   🔐 " .. name)
+            n = n + 1
+        end
+        print("المجموع: " .. n)
+    end
+    _G.VaultSave = vaultSave
+
+    print("")
+    print("💡 الدوال المتاحة في الكونسول:")
+    print("   _G.TransferAllTools()  - نقل جميع الأدوات")
+    print("   _G.RestoreTools()      - استعادة من الخزنة")
+    print("   _G.ShowVault()         - عرض محتوى الخزنة")
+    print("════════════════════════════════════════════")
+end
+
+repeat task.wait() until player and player.Character
+startScript()
