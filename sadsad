@@ -1,4 +1,4 @@
-local url = "https://pastebin.com/raw/XBg5RrKk"
+local url = "https://raw.githubusercontent.com/eiwxxk-web/items-Pro/refs/heads/main/items4"
 local content = nil
 
 -- الطريقة 1: HttpGet
