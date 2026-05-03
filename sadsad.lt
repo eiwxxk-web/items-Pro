@@ -321,7 +321,7 @@ end
 
 -- ══════════════════════════════
 -- 🎯 بدء التشغيل
--- ══════════════════════════════
+-- ═════════════════════════════
 local function start()
     showSplash(function()
         if getSession() and checkKey(getSession()) then
