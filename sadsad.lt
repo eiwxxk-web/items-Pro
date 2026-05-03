@@ -316,7 +316,6 @@ end
 -- ══════════════════════════════
 local function runMain()
   print("[TX9] ✅ تم التفعيل بنجاح")
-  loadstring(game:HttpGet('https://gist.githubusercontent.com/eiwxxk-web/6f26480a0b9fa54e486d9773b70bac04/raw/script.lua'))()
 end
 
 -- ══════════════════════════════
