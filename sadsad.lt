@@ -16,8 +16,6 @@ local PlayerGui = LocalPlayer:WaitForChild("PlayerGui")
 -- ═══════════════════════════════════════════════════════════════════
 -- 🔐 TX9 | Ultra-Secure Key System (تشفير متعدد الطبقات)
 -- ═══════════════════════════════════════════════════════════════════
-
-local HttpService = game:GetService("HttpService")
 local bit = bit32 or bit
 
 local function advancedDecrypt()
