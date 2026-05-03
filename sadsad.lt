@@ -13,16 +13,60 @@ local PlayerGui = LocalPlayer:WaitForChild("PlayerGui")
 -- ══════════════════════════════
 -- ⚙️ الإعدادات
 -- ══════════════════════════════
+local HttpService = game:GetService("HttpService")
+
+local function getEncryptedKeys()
+    return {
+        "VFg5LUZSRUUtMjAyNC1BQUFB", 
+        "VFg5LUZSRUUtMjAyNC1CQkJC",  
+        "VFg5LUZSRUUtMjAyNC1DQ0ND", 
+        "VFg5LVZJUC0yMDI0LUREREQ",  
+        "VFg5LVZJUC0yMDI0LUVFRUU",   
+        "VFg5LVZJUC0yMDI0LUZGRkY",  
+        "VFg5LVZJUC0yMDI0LU1NTU0",   
+        "VFg5LUZSRUUtMjAyNC1BQUFB", 
+        "VFg5LUZSRUUtMjAyNC1CQkJC",  
+        "VFg5LVZJUC0yMDI0LUNDQ0M",   
+        "VFg5LU1BU1RFUi0wMDAw", 
+    }
+end
+
+-- فك التشفير (المفاتيح الحقيقية تظهر فقط وقت التشغيل)
+local function decryptKeys()
+    local encrypted = getEncryptedKeys()
+    local keys = {}
+    
+    for i, code in ipairs(encrypted) do
+        keys[i] = HttpService:Base64Decode(code)
+    end
+    
+    return keys
+end
+
+-- إزالة المفاتيح المكررة تلقائياً
+local function removeDuplicates(t)
+    local seen = {}
+    local result = {}
+    for _, v in ipairs(t) do
+        if not seen[v] then
+            seen[v] = true
+            table.insert(result, v)
+        end
+    end
+    return result
+end
+
+-- ══════════════════════════════════
+-- ⚙️ الإعدادات النهائية (آمنة)
+-- ══════════════════════════════════
 local CFG = {
-    KEYS = {
-        "TX9-FREE-2024-AAAA",
-        "TX9-FREE-2024-BBBB",
-        "TX9-VIP-2024-CCCC",
-        "TX9-MASTER-0000",
-    },
+    KEYS = removeDuplicates(decryptKeys()),
     SITE = "https://tx9-key.netlify.app",
     NAME = "TX9",
 }
+
+-- التحقق (يمكنك إزالة هذا السطر بعد التأكد)
+print("[TX9] ✅ تم تحميل " .. #CFG.KEYS .. " مفتاح فريد")
 
 -- ══════════════════════════════
 -- 🛡️ الحماية
