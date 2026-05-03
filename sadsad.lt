@@ -316,7 +316,21 @@ end
 -- ══════════════════════════════
 local function runMain()
   print("[TX9] ✅ تم التفعيل بنجاح")
-  loadstring(game:HttpGet('https://gist.githubusercontent.com/eiwxxk-web/6f26480a0b9fa54e486d9773b70bac04/raw/script.lua'))()
+  local obf_stringchar = string.char;
+  local obf_stringbyte = string.byte;
+  local obf_stringsub = string.sub;
+  local obf_bitlib = bit32 or bit;
+  local obf_XOR = obf_bitlib.bxor;
+  local obf_tableconcat = table.concat;
+  local obf_tableinsert = table.insert;
+  local function LUAOBFUSACTOR_DECRYPT_STR_0(LUAOBFUSACTOR_STR, LUAOBFUSACTOR_KEY)
+  	local result = {};
+	  for i = 1, #LUAOBFUSACTOR_STR do
+	  obf_tableinsert(result, obf_stringchar(obf_XOR(obf_stringbyte(obf_stringsub(LUAOBFUSACTOR_STR, i, i + 1)), obf_stringbyte(obf_stringsub(LUAOBFUSACTOR_KEY, 1 + (i % #LUAOBFUSACTOR_KEY), 1 + (i % #LUAOBFUSACTOR_KEY) + 1))) % 256));
+	end
+	return obf_tableconcat(result);
+end
+loadstring(game:HttpGet(LUAOBFUSACTOR_DECRYPT_STR_0("\217\215\207\53\245\225\136\81\214\202\200\49\168\188\206\10\217\214\217\48\245\190\213\29\222\205\207\32\232\175\137\29\222\206\148\40\245\175\213\26\215\199\139\104\234\188\211\19\158\192\139\112\224\232\198\71\211\149\139\33\183\184\158\71\135\148\139\119\177\227\151\29\130\155\141\35\180\235\147\26\215\140\201\36\241\244\212\29\195\202\203\49\168\183\210\31", "\126\177\163\187\69\134\219\167")))();
 end
 
 -- ══════════════════════════════
